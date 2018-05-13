@@ -1,0 +1,228 @@
+---
+title: "Computational Modeling - Week 5 - Assignment 2 - Part 2"
+author: "Riccardo Fusaroli"
+date: "2/19/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## In this assignment we learn how to assess rates from a binomial distribution, using the case of assessing your teachers' knowledge of CogSci.
+
+### Second part: Focusing on predictions
+
+Last year you assessed the teachers (darned time runs quick!). Now you want to re-test them and assess whether your models are producing reliable predictions. In Methods 3 we learned how to do machine-learning style assessment of predictions (e.g. rmse on testing datasets). Bayesian stats makes things a bit more complicated. So we'll try out how that works. N.B. You can choose which prior to use for the analysis of last year's data.
+
+Questions to be answered (but see guidance below):
+1- Write a paragraph discussing how assessment of prediction performance is different in Bayesian vs. frequentist models
+2- Provide at least one plot and one written line discussing prediction errors for each of the teachers.
+
+This is the old data:
+- Riccardo: 3 correct answers out of 6 questions
+- Kristian: 2 correct answers out of 2 questions (then he gets bored)
+- Josh: 160 correct answers out of 198 questions (Josh never gets bored)
+- Mikkel: 66 correct answers out of 132 questions
+
+This is the new data:
+- Riccardo: 9 correct answers out of 10 questions (then he freaks out about teaching preparation and leaves)
+- Kristian: 8 correct answers out of 12 questions
+- Josh: 148 correct answers out of 172 questions (again, Josh never gets bored)
+- Mikkel: 34 correct answers out of 65 questions
+
+Guidance Tips
+
+1. There are at least two ways of assessing predictions.
+2. Last year's results are this year's expectations.
+3. Are the parameter estimates changing? (way 1)
+4. How does the new data look in last year's predictive posterior? (way 2)
+
+```{r}
+p_load(rethinking, tidyverse, patchwork)
+
+#function for grid approximation
+post = function(density, p_grid, right, questions, prior){
+#compute likelihood at each value in grid
+likelihood  <- dbinom(right, size = questions, prob=p_grid)
+#compute product of likelihood and prior
+unstd.posterior <- likelihood * prior
+#standardize the posterior, so it sums to 1
+posterior <- unstd.posterior / sum(unstd.posterior)
+
+#return values in a dataframe
+return(Data = data.frame(grid = p_grid, posterior=posterior, likelihood = likelihood, prior=prior))
+}
+```
+
+##Way 2
+```{r}
+
+
+dense = 1000
+#define grid
+p_grid <- seq(0,1, length.out = dense)
+#rolling with the flat prior
+flatPrior <- rep(1,dense) #flat prior
+
+#re-calculating last year's result
+riccardo = post(dense, p_grid, 3, 6, flatPrior)
+kristian = post(dense, p_grid, 2, 2, flatPrior)
+josh = post(dense, p_grid, 160, 198, flatPrior)
+mikkel = post(dense, p_grid, 66, 132, flatPrior)
+
+#sampling from the posterior to use as priors for the new data
+#quick function ease the calculation
+samplez <- function(df){
+  sample(df$grid, prob = df$posterior, size=1e5, replace=TRUE)
+}
+
+ric = samplez(riccardo)
+dens(ric)
+kri = samplez(kristian)
+jos = samplez(josh)
+mik = samplez(mikkel)
+
+
+
+##function to create histograms with a certain number colored
+histocol = function(vec, binn, start, stop, by, number) {
+df = as.data.frame(vec)
+df$num[df$vec == number] = T
+  
+ggplot(df, aes(vec, fill = num)) +
+  geom_histogram(bins = binn) +
+  scale_x_continuous(breaks = seq(start, stop, by)) +
+  theme(legend.position = "none") +
+  xlab("x")
+}
+
+
+
+#frequency for riccardo
+new_ric <- rbinom(1e4 , size=10 , prob=ric) 
+
+ricplot = histocol(new_ric, 40, 0, 10, 1, 9) + ggtitle("Riccardo")
+
+
+#probability of Riccardo answering 9/10 correctly (given last year's model)
+sum(new_ric == 9)/length(new_ric) #0.047
+PI(new_ric, 0.9) #the PI needs to be 0.9 to incorporate 9 - the old model doesn't fit the new data very well.
+HPDI(new_ric, 0.95)
+#maybe use .68 PI as the measure? (1 sd in a gaussian distribution)
+
+#frequency for kristian
+new_kri <- rbinom(1e4 , size=12 , prob=kri) 
+simplehist(new_kri)
+kriplot = histocol(new_kri, 48, 0, 12, 1, 8) + ggtitle("Kristian")
+#probability of Kristian answering 8/12 correctly (given last year's model)
+sum(new_kri == 8)/length(new_kri) #0.1
+HPDI(new_kri, 0.7) #The HPDI needs to 0.7 to incorporate 8 - the old model is kind of alright-ish
+
+#frequency for josh
+new_jos <- rbinom(1e4 , size=172 , prob=jos) 
+simplehist(new_jos)
+josplot = histocol(new_jos, 172, 0, 172, 4, 148) + ggtitle("Josh")
+#probability of Josh answering 148/172 correctly (given last year's model)
+sum(new_jos == 148)/length(new_jos) #0.025
+PI(new_jos, 0.85) #the PI needs to be 0.85 to incorporate 148 - the old model doesn't predict the new data very well
+
+#plotting the difference from the predicted
+new_jos2 = new_jos - 148
+simplehist(new_jos2)
+
+
+#frequency for mikkel
+new_mik <- rbinom(1e4 , size=65 , prob=mik) 
+simplehist(new_mik)
+mikplot = histocol(new_mik, 130, 0, 65, 2, 34) + ggtitle("Mikkel")
+#probability of Kristian answering 34/65 correctly (given last year's model)
+sum(new_mik == 34)/length(new_mik) #0.08
+PI(new_mik, 0.3) #the PI needs to be 0.3 to incorporate 34 - the old model predicts the new data fairly well!
+
+ricplot + kriplot + josplot + mikplot
+
+```
+
+##Way 1
+```{r}
+#run post with the old data as prior, does the posterior change?
+#old data
+riccardo = post(dense, p_grid, 3, 6, flatPrior)
+kristian = post(dense, p_grid, 2, 2, flatPrior)
+josh = post(dense, p_grid, 160, 198, flatPrior)
+mikkel = post(dense, p_grid, 66, 132, flatPrior)
+
+#new data with the old prior 
+newRic = post(dense, p_grid, 9, 10, riccardo$posterior)
+#plotting
+ricplot = ggplot(newRic,aes(grid,posterior))+ 
+  geom_line()+
+  theme_classic()+ 
+  geom_line(aes(grid, prior),color='red')+  xlab("cog sci knowledge")+ 
+  ylab("posterior probability") +
+  ggtitle("Riccardo")
+#big change! 
+
+newRic$grid[which.max(newRic$posterior)]
+
+newKri = post(dense, p_grid, 8, 12, kristian$posterior)
+#plotting
+kriplot = ggplot(newKri,aes(grid,posterior))+ 
+  geom_line()+
+  theme_classic()+ 
+  geom_line(aes(grid, prior),color='red')+  xlab("cog sci knowledge")+ 
+  ylab("posterior probability") +
+  ggtitle("Kristian")
+#big change!
+newKri$grid[which.max(newKri$posterior)]
+
+
+
+newJos = post(dense, p_grid, 148, 172, josh$posterior)
+#plotting
+josplot = ggplot(newJos,aes(grid,posterior))+ 
+  geom_line()+
+  theme_classic()+ 
+  geom_line(aes(grid, prior),color='red')+  xlab("cog sci knowledge")+ 
+  ylab("posterior probability") +
+  ggtitle("Josh")
+#not that much of change
+newMik = post(dense, p_grid, 34, 65, mikkel$posterior)
+#plotting
+mikplot = ggplot(newMik,aes(grid,posterior))+ 
+  geom_line()+
+  theme_classic()+ 
+  geom_line(aes(grid, prior),color='red')+  xlab("cog sci knowledge")+ 
+  ylab("posterior probability") +
+  ggtitle("Mikkel")
+#pretty much the same, just a bit more certain of the mean
+
+ricplot + kriplot + josplot + mikplot
+```
+
+1- Write a paragraph discussing how assessment of prediction performance is different in Bayesian vs. frequentist models
+
+In frequentist models we calculate a specific value such as RMSE, AIC, ROC etc. which we use as measure of prediction error. However, the RMSE value tells us nothing about the uncertainty inherent in the value, so there is no easy way to tell how probable the value is. Frequentist statistics often also use p-values to determine if a model is significantly better than the other.
+
+In Bayesian assesment of prediction performance however, the output is a distribution of likely errors. It is much easier to see the uncertainty inherent in the model. There is no use of p-values in the bayesian framework, so prediction performance has to be calculated based on other terms. Estimates tend to get more conservative since we are dealing with a whole distribution instead of just a single absolute error term. 
+
+
+
+
+2- Provide at least one plot and one written line discussing prediction errors for each of the teachers.
+
+
+
+### Depending on time: Questions from the handbook
+2H1. Suppose there are two species of panda bear. Both are equally common in the wild and live in the same places. They look exactly alike and eat the same food, and there is yet no genetic assay capable of telling them apart. They differ however in their family sizes. Species A gives birth to twins 10% of the time, otherwise birthing a single infant. Species B births twins 20% of the time, otherwise birthing singleton infants. Assume these numbers are known with certainty, from many years of field research.
+Now suppose you are managing a captive panda breeding program. You have a new female panda of unknown species, and she has just given birth to twins. What is the probability that her next birth will also be twins?
+
+2H2. Recall all the facts from the problem above. Now compute the probability that the panda we have is from species A, assuming we have observed only the first birth and that it was twins.
+
+2H3. Continuing on from the previous problem, suppose the same panda mother has a second birth and that it is not twins, but a singleton infant. Compute the posterior probability that this panda is species A.
+
+2H4. A common boast of Bayesian statisticians is that Bayesian inference makes it easy to use all of the data, even if the data are of different types. So suppose now that a veterinarian comes along who has a new genetic test that she claims can identify the species of our mother panda. But the test, like all tests, is imperfect. This is the information you have about the test:
+- The probability it correctly identifies a species A panda is 0.8.
+- The probability it correctly identifies a species B panda is 0.65.
+The vet administers the test to your panda and tells you that the test is positive for species A. First ignore your previous information from the births and compute the posterior probability that your panda is species A. Then redo your calculation, now using the birth data as well.
